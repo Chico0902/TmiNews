@@ -6,7 +6,9 @@ import tmi.app.dto.NewsRegisterRequest;
 import tmi.app.service.NewsService;
 import tmi.app.security.JwtProvider;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.slf4j.Logger;
+import org.springframework.web.client.RestTemplate;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,24 +23,27 @@ import java.util.Map;
 @RequestMapping("/news")
 public class NewsController {
 
-  private final WebClient webClient;
+  @Value("${ai.service.url}")
+  private String aiServiceUrl;
+
   private final NewsService newsService;
   private final JwtProvider jwtProvider;
   private static final Logger logger = LoggerFactory.getLogger(NewsController.class);
+
+  private final RestTemplate restTemplate;
 
   @PostMapping("/preview")
   public ResponseEntity<NewsPreviewResponse> previewNews(
       @RequestHeader("Authorization") String bearerToken,
       @RequestBody NewsPreviewRequest request) {
 
-    // JWT 검증 전 로그 찍기
+    // JWT 검증
     String token = bearerToken.replace("Bearer ", "");
     logger.info("JWT 토큰 추출: {}", token);
-
     Long userId = jwtProvider.extractUserId(token);
     logger.info("토큰으로 추출한 userId: {}", userId);
 
-    // 1) category 유효성 체크
+    // category 유효성 체크
     String[] categories = { "IT", "연예", "스포츠", "사회", "건강", "재테크" };
     boolean validCategory = false;
     for (String c : categories) {
@@ -49,40 +54,35 @@ public class NewsController {
     }
     if (!validCategory) {
       logger.warn("유효하지 않은 카테고리: {}", request.getCategory());
-      return ResponseEntity.badRequest().build(); // 400
+      return ResponseEntity.badRequest().build();
     }
 
-    // 2) news_time이 null이면 현재시간으로 대체
+    // news_time 대체
     String newsTime = request.getNewsTime();
     if (newsTime == null || newsTime.isEmpty()) {
       newsTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
     logger.info("뉴스 시간: {}", newsTime);
 
-    // 3) AI 서버 호출
-    logger.info("AI 서버 호출 시작");
-    Map<String, String> aiResponse = webClient.post()
-        .uri("/generate")
-        .bodyValue(Map.of(
-            "title", request.getTitle(),
-            "content", request.getContent(),
-            "category", request.getCategory()))
-        .retrieve()
-        .bodyToMono(Map.class)
-        .block();
+    // AI 서버 호출 - RestTemplate 사용 예시
+    String url = aiServiceUrl + "/generate";
+    logger.info("Directly calling AI endpoint at: {}", url);
 
+    Map<String, String> requestBody = Map.of(
+        "title", request.getTitle(),
+        "content", request.getContent(),
+        "category", request.getCategory());
+
+    ResponseEntity<Map> aiResponseEntity = restTemplate.postForEntity(url, requestBody, Map.class);
+    Map<String, String> aiResponse = aiResponseEntity.getBody();
     logger.info("AI 서버 응답: {}", aiResponse);
 
-    // 4) 응답 해석 및 반환
-    String generatedTitle = aiResponse.get("generated_title");
-    String generatedContent = aiResponse.get("generated_content");
-
+    // 응답 해석 및 반환
     NewsPreviewResponse response = new NewsPreviewResponse();
-    response.setTitle(generatedTitle);
-    response.setContent(generatedContent);
+    response.setTitle(aiResponse.get("generated_title"));
+    response.setContent(aiResponse.get("generated_content"));
     response.setCategory(request.getCategory());
     response.setNewsTime(newsTime);
-
     logger.info("응답 반환 완료");
     return ResponseEntity.ok(response);
   }

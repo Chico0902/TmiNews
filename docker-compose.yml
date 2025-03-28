@@ -20,7 +20,7 @@ services:
     build: ./AI
     container_name: ${AI_CONTAINER_NAME}
     ports:
-      - "${AI_BINDING_PORT}:8000"
+      - "8000:8000"
     env_file:
       - .env
     environment:
